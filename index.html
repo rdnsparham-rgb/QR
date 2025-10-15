@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>بارکد ساز گرافیکی</title>
+<script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.5.0/lib/qr-code-styling.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@700&display=swap');
+
+  body {
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    height:100vh;
+    background:#0d0d0d;
+    font-family:'Vazirmatn', sans-serif;
+    color:white;
+    text-align:center;
+  }
+  input, textarea, button {
+    padding:10px;
+    margin:10px;
+    border-radius:8px;
+    border:none;
+    outline:none;
+    font-size:15px;
+    width:280px;
+    background:#1a1a1a;
+    color:white;
+    direction:ltr;
+  }
+  textarea {
+    height:80px;
+    resize:none;
+  }
+  button {
+    background:#06b6d4;
+    color:white;
+    cursor:pointer;
+    font-weight:bold;
+    transition:0.2s;
+  }
+  button:hover {
+    background:#0891b2;
+  }
+  #qr {
+    margin-top:20px;
+  }
+</style>
+</head>
+<body>
+
+<h2>بارکد (QR) ساز گرافیکی</h2>
+<textarea id="textInput" placeholder="اینجا هر متن یا آدرسی بنویس..."></textarea>
+<button onclick="generateQR()">ساخت QR</button>
+<div id="qr"></div>
+<button id="downloadBtn" style="display:none;">📥 ذخیره در گالری</button>
+
+<script>
+let qrCode;
+
+function generateQR() {
+  const text = document.getElementById("textInput").value.trim();
+  if(!text) return alert("لطفاً متنی وارد کنید!");
+
+  // پاک کردن QR قبلی
+  if (qrCode) document.getElementById("qr").innerHTML = "";
+
+  qrCode = new QRCodeStyling({
+    width: 320,
+    height: 320,
+    type: "canvas",
+    data: text,
+    dotsOptions: { color: "#ffffff", type: "rounded" },
+    cornersSquareOptions: { color: "#06b6d4", type: "extra-rounded" },
+    backgroundOptions: { color: "#0d0d0d" }
+  });
+
+  qrCode.append(document.getElementById("qr"));
+
+  // اضافه کردن متن گرافیکی وسط QR
+  setTimeout(() => {
+    const canvas = document.querySelector("#qr canvas");
+    const ctx = canvas.getContext("2d");
+    
+    ctx.shadowColor = "#06b6d4";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = "#000"; // رنگ مشکی
+    ctx.font = "bold 17px Vazirmatn, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("rdnsparham-rgb.github.io/QR", canvas.width / 2, canvas.height / 2);
+  }, 500);
+
+  document.getElementById("downloadBtn").style.display = "inline-block";
+}
+
+document.getElementById("downloadBtn").addEventListener("click", () => {
+  qrCode.download({ name: "QR_Code", extension: "png" });
+});
+</script>
+
+</body>
+</html>
