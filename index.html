@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="fa">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>QR ساز — محدودیت روزانه</title>
+
+<!-- QR library -->
+<script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.5.0/lib/qr-code-styling.js"></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Vazirmatn:wght@700&display=swap');
+  :root{--accent:#06b6d4;--bg:#0d0d0d;--panel:#111}
+  html,body{height:100%;margin:0;background:var(--bg);color:#fff;font-family:'Vazirmatn',sans-serif;direction:rtl}
+  .wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;box-sizing:border-box}
+  h1{font-family:'Orbitron',sans-serif;color:var(--accent);font-size:30px;margin:6px 0;text-shadow:0 0 14px rgba(6,182,212,.2),0 0 28px rgba(8,145,178,.08)}
+  .card{background:rgba(255,255,255,0.02);padding:18px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.6);width:360px;max-width:95%}
+  textarea{width:100%;height:80px;border-radius:10px;padding:10px;border:none;background:#111;color:#fff;resize:none;font-size:14px;direction:ltr}
+  .row{display:flex;gap:8px;align-items:center;margin-top:10px}
+  button{padding:10px 12px;border-radius:8px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-weight:700}
+  button[disabled]{opacity:.45;cursor:not-allowed}
+  #qr{display:flex;justify-content:center;margin-top:16px;min-height:340px}
+  #limitText{color:#ff9b9b;margin-top:8px;font-size:13px}
+  .small{font-size:13px;color:#a8b3bd;margin-top:6px}
+  #qr canvas{border-radius:8px}
+  #loading{display:none;margin-top:16px;color:#9bd3e0;font-size:14px;}
+  #countdown{display:none;font-family:'Orbitron',sans-serif;color:#06b6d4;font-size:30px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Rubika.ir/vps_plus</h1>
+    <div>
+      <textarea id="textInput" placeholder="هر متن یا آدرس را اینجا بنویس..."></textarea>
+      <div class="row">
+        <button id="generateBtn">ساخت QR</button>
+        <button id="downloadBtn" style="display:none" disabled>📥 ذخیره PNG</button>
+      </div>
+      <div id="limitText" class="small"></div>
+      <div id="loading">در حال ساخت QR... لطفاً صبر کنید ⏳</div>
+      <div id="countdown"></div>
+      <div id="qr"></div>
+      <div class="small" style="margin-top:10px;color:#9bd3e0">
+        متن وسط: <strong style="color:#fff">rdnsparham-rgb.github.io/QR</strong>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- helper ----------
+function pad(n){return String(n).padStart(2,'0');}
+function todayKey(){
+  const d=new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+// fingerprint helpers (kept simple)
+async function sha256Hex(str){ const enc=new TextEncoder().encode(str); const h=await crypto.subtle.digest('SHA-256',enc); return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+function getCanvasFingerprint(){ try{ const c=document.createElement('canvas'),ctx=c.getContext('2d'); c.width=200; c.height=50; ctx.textBaseline='top'; ctx.font='14px Arial'; ctx.fillStyle='#f60'; ctx.fillRect(125,1,62,20); ctx.fillStyle='#069'; ctx.fillText('rdnsparham-fp-test',2,15); ctx.globalCompositeOperation='multiply'; ctx.fillStyle='rgb(255,0,255)'; ctx.beginPath(); ctx.arc(50,20,10,0,Math.PI*2,true); ctx.fill(); return c.toDataURL(); }catch(e){return 'no-canvas';}}
+function collectBrowserString(){const n=navigator; return [n.userAgent||'', n.platform||'', n.language||'', screen.width||0, screen.height||0, screen.colorDepth||0, (Intl?.DateTimeFormat().resolvedOptions().timeZone)||''].join('||');}
+async function generateFingerprint(){ return sha256Hex( collectBrowserString() + '||' + getCanvasFingerprint() ); }
+
+// storage helpers
+function setCookie(name,val,days=365){ const d=new Date(); d.setTime(d.getTime()+days*24*60*60*1000); document.cookie = `${name}=${encodeURIComponent(val)};expires=${d.toUTCString()};path=/;SameSite=Lax`; }
+function getCookie(name){ const k=name+'='; return document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith(k))?.substring(k.length) || null; }
+async function getUsageRecord(fp){
+  const key='qr_limit_'+fp;
+  try{ const s=localStorage.getItem(key); if(s) return JSON.parse(s); }catch(e){}
+  const c = getCookie(key);
+  if(c) try{return JSON.parse(decodeURIComponent(c));}catch(e){}
+  return null;
+}
+async function setUsageRecord(fp,rec){
+  const key='qr_limit_'+fp; try{ localStorage.setItem(key, JSON.stringify(rec)); }catch(e){} try{ setCookie(key, JSON.stringify(rec)); }catch(e){} }
+
+// wait for canvas (timeout 1500ms)
+function waitForCanvas(container, timeout=1500){
+  return new Promise((resolve)=>{
+    const start = Date.now();
+    (function poll(){
+      const canvas = container.querySelector('canvas');
+      if(canvas) return resolve(canvas);
+      if(Date.now() - start > timeout) return resolve(null);
+      setTimeout(poll, 50);
+    })();
+  });
+}
+
+// ---------- main ----------
+const MAX_PER_DAY = 2;
+let qrCode = null;
+const qrContainer = document.getElementById('qr');
+const generateBtn = document.getElementById('generateBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const limitText = document.getElementById('limitText');
+const loading = document.getElementById('loading');
+const countdownEl = document.getElementById('countdown');
+
+async function init(){
+  const fp = await generateFingerprint();
+  window._fp = fp;
+  const rec = await getUsageRecord(fp);
+  const today = todayKey();
+  if(rec && rec.date === today){
+    limitText.innerText = `تعداد استفاده امروز: ${rec.count} از ${MAX_PER_DAY}`;
+    if(rec.count >= MAX_PER_DAY) disableGenerate();
+  }else{
+    limitText.innerText = `تعداد استفاده امروز: 0 از ${MAX_PER_DAY}`;
+  }
+}
+init();
+
+function disableGenerate(){
+  generateBtn.disabled = true;
+  limitText.innerText = `⚠️ محدودیت امروز اعمال شده — فقط ${MAX_PER_DAY} بار در روز`;
+  downloadBtn.style.display = 'none';
+  downloadBtn.disabled = true;
+}
+
+// draw center label safely
+function drawCenterLabel(canvas, lines){
+  try{
+    const ctx = canvas.getContext('2d');
+    const cw = canvas.width, ch = canvas.height;
+    // draw white outline + black fill + glow
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // first line style (QR CODE)
+    ctx.font = 'bold 20px Orbitron, sans-serif';
+    // second line style (Rubika)
+    // prepare positions: two lines and a small third line
+    const totalLines = lines.length;
+    const gap = 22;
+    const startY = ch/2 - ((totalLines-1)/2)*gap;
+    // draw outline + fill for each line
+    for(let i=0;i<lines.length;i++){
+      const y = startY + i*gap;
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = '#fff';
+      ctx.strokeText(lines[i], cw/2, y);
+      ctx.fillStyle = '#000';
+      // glow
+      ctx.shadowColor = '#06b6d4';
+      ctx.shadowBlur = 8;
+      ctx.fillText(lines[i], cw/2, y);
+      // reset shadow for next iteration
+      ctx.shadowBlur = 0;
+    }
+    ctx.restore();
+  }catch(e){
+    console.error('drawCenterLabel error', e);
+  }
+}
+
+// core click handler with 3s delay and safe canvas wait
+generateBtn.addEventListener('click', async ()=>{
+  const text = document.getElementById('textInput').value.trim();
+  if(!text){ alert('متن یا آدرس را وارد کن'); return; }
+
+  // check usage
+  const fp = window._fp || await generateFingerprint();
+  const today = todayKey();
+  let rec = await getUsageRecord(fp);
+  if(!rec || rec.date !== today) rec = {date: today, count: 0};
+  if(rec.count >= MAX_PER_DAY){ disableGenerate(); return; }
+
+  // increment and save early to avoid race
+  rec.count++;
+  await setUsageRecord(fp, rec);
+  limitText.innerText = `تعداد استفاده امروز: ${rec.count} از ${MAX_PER_DAY}`;
+  if(rec.count >= MAX_PER_DAY) disableGenerate();
+
+  // hide UI elements during build
+  qrContainer.style.display = 'none';
+  downloadBtn.style.display = 'none';
+  downloadBtn.disabled = true;
+  loading.style.display = 'block';
+  countdownEl.style.display = 'block';
+  generateBtn.disabled = true;
+
+  // build QR (start now, but don't rely on immediate canvas)
+  if(qrCode){
+    // clear previous
+    qrContainer.innerHTML = '';
+    qrCode = null;
+  }
+
+  qrCode = new QRCodeStyling({
+    width: 320,
+    height: 320,
+    type: 'canvas',
+    data: text,
+    dotsOptions: { color: '#ffffff', type: 'rounded' },
+    cornersSquareOptions: { color: '#06b6d4', type: 'extra-rounded' },
+    backgroundOptions: { color: '#0d0d0d' }
+  });
+  qrCode.append(qrContainer);
+
+  // wait for canvas to exist (safe)
+  const canvas = await waitForCanvas(qrContainer, 1500);
+  if(canvas){
+    // draw center label now (we use three lines)
+    drawCenterLabel(canvas, ['QR CODE', 'Rubika:VPS_Plus', 'rdnsparham-rgb.github.io/QR']);
+  }else{
+    console.warn('canvas not found in time; skipping center draw');
+  }
+
+  // countdown 3..1
+  let secs = 3;
+  countdownEl.innerText = secs;
+  const timer = setInterval(()=>{
+    secs--;
+    countdownEl.innerText = secs>0?secs:'';
+    if(secs<=0){
+      clearInterval(timer);
+      // reveal
+      loading.style.display = 'none';
+      countdownEl.style.display = 'none';
+      qrContainer.style.display = 'flex';
+      downloadBtn.style.display = 'inline-block';
+      downloadBtn.disabled = false;
+      generateBtn.disabled = false;
+    }
+  }, 1000);
+});
+
+// download
+downloadBtn.addEventListener('click', ()=>{
+  if(!qrCode){ alert('ابتدا QR بساز'); return; }
+  qrCode.download({ name: 'QR_Code', extension: 'png' });
+});
+</script>
+</body>
+</html>
